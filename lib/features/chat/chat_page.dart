@@ -87,7 +87,7 @@ class _ChatPageState extends State<ChatPage> {
                       XiaxiaSpacing.xl,
                     ),
                     itemCount: controller.messages.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: XiaxiaSpacing.md),
+                    separatorBuilder: (_, _) => const SizedBox(height: XiaxiaSpacing.md),
                     itemBuilder: (_, index) => _MessageLine(message: controller.messages[index]),
                   ),
           ),
