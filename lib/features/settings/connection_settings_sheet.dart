@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/core_client.dart';
 import '../../core/api/core_diagnostics_client.dart';
+import '../../core/api/core_models.dart';
 import '../../core/api/production_core_contract_adapter.dart';
+import '../../core/api/production_core_client_factory.dart';
 import '../../core/config/core_connection_config.dart';
 import '../../core/config/core_connection_repository.dart';
 import '../../design_system/xiaxia_tokens.dart';
@@ -12,12 +14,15 @@ class ConnectionSettingsSheet extends StatefulWidget {
   const ConnectionSettingsSheet({
     super.key,
     required this.repository,
+    this.clientFactory = const ProductionCoreClientFactory(),
   });
 
   final CoreConnectionRepository repository;
+  final CoreClientFactory clientFactory;
 
   @override
-  State<ConnectionSettingsSheet> createState() => _ConnectionSettingsSheetState();
+  State<ConnectionSettingsSheet> createState() =>
+      _ConnectionSettingsSheetState();
 }
 
 class _ConnectionSettingsSheetState extends State<ConnectionSettingsSheet> {
@@ -29,6 +34,9 @@ class _ConnectionSettingsSheetState extends State<ConnectionSettingsSheet> {
   bool _obscure = true;
   String? _error;
   String? _diagnosticsMessage;
+  bool _lifeChecking = false;
+  String? _lifeError;
+  LifeRuntimeStatusSnapshot? _lifeStatus;
 
   @override
   void initState() {
@@ -113,6 +121,34 @@ class _ConnectionSettingsSheetState extends State<ConnectionSettingsSheet> {
     }
   }
 
+  Future<void> _refreshLifeStatus() async {
+    final baseUrl = CoreConnectionConfig.parseBaseUrl(_urlController.text);
+    final token = _tokenController.text.trim();
+    if (baseUrl == null || token.isEmpty) {
+      setState(() => _lifeError = '请先填写 Core 地址和访问凭证。');
+      return;
+    }
+    setState(() {
+      _lifeChecking = true;
+      _lifeError = null;
+    });
+    CoreClient? client;
+    try {
+      client = widget.clientFactory.create(
+        CoreConnectionConfig(baseUrl: baseUrl, bearerToken: token),
+      );
+      final status = await client.fetchLifeStatus();
+      if (mounted) setState(() => _lifeStatus = status);
+    } on CoreClientException catch (error) {
+      if (mounted) setState(() => _lifeError = error.userMessage);
+    } catch (_) {
+      if (mounted) setState(() => _lifeError = '无法读取 Life Runtime 状态。');
+    } finally {
+      client?.close();
+      if (mounted) setState(() => _lifeChecking = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -133,7 +169,10 @@ class _ConnectionSettingsSheetState extends State<ConnectionSettingsSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('连接 Xiaxia Core', style: Theme.of(context).textTheme.headlineSmall),
+                    Text(
+                      '连接 Xiaxia Core',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
                     const SizedBox(height: XiaxiaSpacing.xs),
                     Text(
                       '地址保存在本机；访问凭证由 Android 安全存储保护。',
@@ -160,13 +199,22 @@ class _ConnectionSettingsSheetState extends State<ConnectionSettingsSheet> {
                         suffixIcon: IconButton(
                           tooltip: _obscure ? '显示' : '隐藏',
                           onPressed: () => setState(() => _obscure = !_obscure),
-                          icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                          icon: Icon(
+                            _obscure
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
                         ),
                       ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: XiaxiaSpacing.sm),
-                      Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                      Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
                     ],
                     if (kDebugMode) ...[
                       const SizedBox(height: XiaxiaSpacing.md),
@@ -174,7 +222,9 @@ class _ConnectionSettingsSheetState extends State<ConnectionSettingsSheet> {
                         key: const Key('verify-core-button'),
                         onPressed: _checking ? null : _checkCore,
                         icon: const Icon(Icons.health_and_safety_outlined),
-                        label: Text(_checking ? '正在验证…' : 'Developer · 验证 Core'),
+                        label: Text(
+                          _checking ? '正在验证…' : 'Developer · 验证 Core',
+                        ),
                       ),
                       if (_diagnosticsMessage != null) ...[
                         const SizedBox(height: XiaxiaSpacing.xs),
@@ -185,6 +235,13 @@ class _ConnectionSettingsSheetState extends State<ConnectionSettingsSheet> {
                         ),
                       ],
                     ],
+                    const SizedBox(height: XiaxiaSpacing.lg),
+                    _LifeRuntimePanel(
+                      status: _lifeStatus,
+                      error: _lifeError,
+                      loading: _lifeChecking,
+                      onRefresh: _refreshLifeStatus,
+                    ),
                     const SizedBox(height: XiaxiaSpacing.lg),
                     SizedBox(
                       width: double.infinity,
@@ -201,14 +258,112 @@ class _ConnectionSettingsSheetState extends State<ConnectionSettingsSheet> {
   }
 }
 
+class _LifeRuntimePanel extends StatelessWidget {
+  const _LifeRuntimePanel({
+    required this.status,
+    required this.error,
+    required this.loading,
+    required this.onRefresh,
+  });
+
+  final LifeRuntimeStatusSnapshot? status;
+  final String? error;
+  final bool loading;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = status;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(XiaxiaSpacing.md),
+        child: Column(
+          key: const Key('life-runtime-status'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Life Runtime',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  key: const Key('refresh-life-status'),
+                  tooltip: '刷新 Runtime 状态',
+                  onPressed: loading ? null : onRefresh,
+                  icon: loading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh_rounded),
+                ),
+              ],
+            ),
+            if (error != null)
+              Text(
+                error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              )
+            else if (value == null)
+              Text(
+                '点击刷新查看最近一次 wake。',
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else ...[
+              Text('Mode: ${value.mode}', key: const Key('life-mode')),
+              Text('Last wake: ${_formatTime(value.lastWakeAt)}'),
+              Text('Next wake: ${value.nextWakeAt == null ? '—' : _formatTime(value.nextWakeAt!)}'),
+              const SizedBox(height: XiaxiaSpacing.xs),
+              Text(
+                'Today · Wakes ${value.wakeCount} · Cognitions ${value.cognitionCount} '
+                '· Tokens ${value.tokenUsage} · Proactive ${value.proactiveDeliveryCount}',
+                key: const Key('life-today'),
+              ),
+              Text('Active activities: ${value.activeActivityCount}'),
+              Text(
+                'Private thoughts: ${value.privateThoughtCount} · '
+                'Candidates: ${value.candidateCount}',
+              ),
+              Text(
+                'Last outcome: ${value.lastOutcomeType ?? 'none'} '
+                '(${_formatTime(value.lastOutcomeAt)})',
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _formatTime(DateTime? value) {
+    if (value == null) return 'none';
+    final local = value.toLocal();
+    String two(int part) => part.toString().padLeft(2, '0');
+    return '${two(local.month)}-${two(local.day)} '
+        '${two(local.hour)}:${two(local.minute)}';
+  }
+}
+
 Future<void> showConnectionSettings(
   BuildContext context,
-  CoreConnectionRepository repository,
-) {
+  CoreConnectionRepository repository, {
+  CoreClientFactory clientFactory = const ProductionCoreClientFactory(),
+}) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (_) => ConnectionSettingsSheet(repository: repository),
+    builder: (_) => ConnectionSettingsSheet(
+      repository: repository,
+      clientFactory: clientFactory,
+    ),
   );
 }

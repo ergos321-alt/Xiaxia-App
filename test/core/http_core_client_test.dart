@@ -15,65 +15,87 @@ void main() {
     bearerToken: 'secret',
   );
 
-  test('first /v1/chat request omits conversation_id and uses Bearer auth', () async {
+  test('default chat timeout exceeds the 90 second edge budget', () {
     final client = HttpCoreClient(
       config: config,
       adapter: const ProductionCoreContractAdapter(),
-      httpClient: MockClient((incoming) async {
-        expect(incoming.url.path, '/v1/chat');
-        expect(incoming.method, 'POST');
-        expect(incoming.headers['Authorization'], 'Bearer secret');
-        expect(jsonDecode(incoming.body), {'message': '今天有点累。'});
-        return _chatResponse();
-      }),
+      httpClient: MockClient((_) async => _chatResponse()),
     );
 
-    final reply = await client.sendChat(
-      const CoreChatRequest(message: '  今天有点累。  ', conversationId: null),
-    );
-    expect(reply.reply, '那就先慢一点，我在。');
-    expect(reply.conversationId, 'core-conversation-1');
-    expect(reply.requestId, 'request-1');
+    expect(client.timeout, const Duration(seconds: 100));
+    client.close();
   });
 
-  test('follow-up /v1/chat request includes Core conversation_id only', () async {
-    final client = HttpCoreClient(
-      config: config,
-      adapter: const ProductionCoreContractAdapter(),
-      httpClient: MockClient((incoming) async {
-        expect(jsonDecode(incoming.body), {
-          'message': '继续',
-          'conversation_id': 'core-conversation-1',
-        });
-        return _chatResponse();
-      }),
-    );
+  test(
+    'first /v1/chat request omits conversation_id and uses Bearer auth',
+    () async {
+      final client = HttpCoreClient(
+        config: config,
+        adapter: const ProductionCoreContractAdapter(),
+        httpClient: MockClient((incoming) async {
+          expect(incoming.url.path, '/v1/chat');
+          expect(incoming.method, 'POST');
+          expect(incoming.headers['Authorization'], 'Bearer secret');
+          expect(jsonDecode(incoming.body), {'message': '今天有点累。'});
+          return _chatResponse();
+        }),
+      );
 
-    await client.sendChat(
-      const CoreChatRequest(
-        message: '继续',
-        conversationId: 'core-conversation-1',
-      ),
-    );
-  });
+      final reply = await client.sendChat(
+        const CoreChatRequest(message: '  今天有点累。  ', conversationId: null),
+      );
+      expect(reply.reply, '那就先慢一点，我在。');
+      expect(reply.conversationId, 'core-conversation-1');
+      expect(reply.requestId, 'request-1');
+    },
+  );
 
-  test('parses response headers without exposing them to Chat presentation', () async {
-    final client = HttpCoreClient(
-      config: config,
-      adapter: const ProductionCoreContractAdapter(),
-      httpClient: MockClient((_) async => _chatResponse(memoryDegraded: true)),
-    );
+  test(
+    'follow-up /v1/chat request includes Core conversation_id only',
+    () async {
+      final client = HttpCoreClient(
+        config: config,
+        adapter: const ProductionCoreContractAdapter(),
+        httpClient: MockClient((incoming) async {
+          expect(jsonDecode(incoming.body), {
+            'message': '继续',
+            'conversation_id': 'core-conversation-1',
+          });
+          return _chatResponse();
+        }),
+      );
 
-    final reply = await client.sendChat(
-      const CoreChatRequest(message: '你好', conversationId: null),
-    );
-    expect(reply.diagnostics.headerRequestId, 'request-1');
-    expect(reply.diagnostics.httpStatus, 200);
-    expect(reply.diagnostics.model, 'qwen-flash');
-    expect(reply.diagnostics.memoryRetrievedCount, 6);
-    expect(reply.diagnostics.memoryDegraded, isTrue);
-    expect(reply.reply, isNotEmpty);
-  });
+      await client.sendChat(
+        const CoreChatRequest(
+          message: '继续',
+          conversationId: 'core-conversation-1',
+        ),
+      );
+    },
+  );
+
+  test(
+    'parses response headers without exposing them to Chat presentation',
+    () async {
+      final client = HttpCoreClient(
+        config: config,
+        adapter: const ProductionCoreContractAdapter(),
+        httpClient: MockClient(
+          (_) async => _chatResponse(memoryDegraded: true),
+        ),
+      );
+
+      final reply = await client.sendChat(
+        const CoreChatRequest(message: '你好', conversationId: null),
+      );
+      expect(reply.diagnostics.headerRequestId, 'request-1');
+      expect(reply.diagnostics.httpStatus, 200);
+      expect(reply.diagnostics.model, 'qwen-flash');
+      expect(reply.diagnostics.memoryRetrievedCount, 6);
+      expect(reply.diagnostics.memoryDegraded, isTrue);
+      expect(reply.reply, isNotEmpty);
+    },
+  );
 
   test('maps 401 without leaking credentials', () async {
     final client = _client(config, (_) async => http.Response('{}', 401));
@@ -140,10 +162,7 @@ void main() {
   });
 
   test('rejects malformed JSON and missing required response fields', () async {
-    final malformedJson = _client(
-      config,
-      (_) async => http.Response('{', 200),
-    );
+    final malformedJson = _client(config, (_) async => http.Response('{', 200));
     expect(
       (await _captureFailure(malformedJson)).kind,
       CoreFailureKind.malformedResponse,
@@ -176,6 +195,109 @@ void main() {
       (await _captureFailure(client)).kind,
       CoreFailureKind.malformedResponse,
     );
+  });
+
+  test('registers shared conversation with bearer auth', () async {
+    final client = _client(config, (incoming) async {
+      expect(incoming.method, 'POST');
+      expect(incoming.url.path, '/v1/life/conversation');
+      expect(incoming.headers['Authorization'], 'Bearer secret');
+      expect(jsonDecode(incoming.body), {'conversation_id': 'conversation-7'});
+      return http.Response('{"conversation_id":"conversation-7"}', 200);
+    });
+
+    await client.registerSharedConversation('conversation-7');
+  });
+
+  test('parses proactive messages and preserves server ids', () async {
+    final client = _client(config, (incoming) async {
+      expect(incoming.url.path, '/v1/chat/proactive');
+      expect(incoming.url.queryParameters, {
+        'conversation_id': 'conversation-7',
+        'after_id': '40',
+      });
+      return http.Response.bytes(
+        utf8.encode(
+          jsonEncode({
+            'conversation_id': 'conversation-7',
+            'messages': [
+              {
+                'id': 42,
+                'content': '我想起你啦。',
+                'created_at': '2026-09-21T08:00:00Z',
+              },
+            ],
+          }),
+        ),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+
+    final messages = await client.fetchProactiveMessages(
+      'conversation-7',
+      afterId: 40,
+    );
+    expect(messages.single.id, 42);
+    expect(messages.single.content, '我想起你啦。');
+  });
+
+  test('life status is authenticated and excludes private content', () async {
+    final client = _client(config, (incoming) async {
+      expect(incoming.url.path, '/v1/life/status');
+      expect(incoming.headers['Authorization'], 'Bearer secret');
+      return http.Response(
+        jsonEncode({
+          'mode': 'idle',
+          'last_wake_at': '2026-09-21T07:00:00Z',
+          'next_wake_at': '2026-09-21T09:00:00Z',
+          'today': {
+            'wake_count': 2,
+            'cognition_count': 1,
+            'token_usage': 3269,
+            'proactive_delivery_count': 1,
+          },
+          'active_activity': {'exists': false, 'count': 0},
+          'interior': {'private_count': 2, 'candidate_count': 0},
+          'last_outcome': {'type': 'DELIVERY', 'at': '2026-09-21T08:00:00Z'},
+          'shared_conversation_ready': true,
+        }),
+        200,
+      );
+    });
+
+    final status = await client.fetchLifeStatus();
+    expect(status.mode, 'idle');
+    expect(status.privateThoughtCount, 2);
+    expect(status.proactiveDeliveryCount, 1);
+    expect(status.lastOutcomeType, 'DELIVERY');
+  });
+
+  test('life status accepts no next meaningful wake', () async {
+    final client = _client(config, (incoming) async {
+      expect(incoming.url.path, '/v1/life/status');
+      return http.Response(
+        jsonEncode({
+          'mode': 'idle',
+          'last_wake_at': '2026-09-21T07:00:00Z',
+          'next_wake_at': null,
+          'today': {
+            'wake_count': 0,
+            'cognition_count': 0,
+            'token_usage': 0,
+            'proactive_delivery_count': 0,
+          },
+          'active_activity': {'exists': false, 'count': 0},
+          'interior': {'private_count': 0, 'candidate_count': 0},
+          'last_outcome': {'type': 'REST', 'at': null},
+          'shared_conversation_ready': true,
+        }),
+        200,
+      );
+    });
+
+    final status = await client.fetchLifeStatus();
+    expect(status.nextWakeAt, isNull);
   });
 }
 

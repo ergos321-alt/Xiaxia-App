@@ -3,6 +3,12 @@ import 'core_models.dart';
 
 abstract interface class CoreClient {
   Future<CoreChatReply> sendChat(CoreChatRequest request);
+  Future<void> registerSharedConversation(String conversationId);
+  Future<List<CoreProactiveMessage>> fetchProactiveMessages(
+    String conversationId, {
+    int afterId = 0,
+  });
+  Future<LifeRuntimeStatusSnapshot> fetchLifeStatus();
   void close();
 }
 

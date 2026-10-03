@@ -9,6 +9,24 @@ class ProductionCoreContractAdapter
   Uri chatUri(Uri baseUrl) => baseUrl.resolve('/v1/chat');
 
   @override
+  Uri sharedConversationUri(Uri baseUrl) =>
+      baseUrl.resolve('/v1/life/conversation');
+
+  @override
+  Uri proactiveMessagesUri(Uri baseUrl, String conversationId, int afterId) =>
+      baseUrl
+          .resolve('/v1/chat/proactive')
+          .replace(
+            queryParameters: {
+              'conversation_id': conversationId,
+              'after_id': '$afterId',
+            },
+          );
+
+  @override
+  Uri lifeStatusUri(Uri baseUrl) => baseUrl.resolve('/v1/life/status');
+
+  @override
   Uri healthUri(Uri baseUrl) => baseUrl.resolve('/health');
 
   @override
@@ -37,6 +55,49 @@ class ProductionCoreContractAdapter
       reply: reply,
       conversationId: conversationId,
       requestId: requestId,
+    );
+  }
+
+  @override
+  List<CoreProactiveMessage> decodeProactiveMessages(
+    Map<String, dynamic> json,
+  ) {
+    final values = json['messages'];
+    if (values is! List) throw const FormatException('Missing messages list');
+    return values
+        .map((value) {
+          if (value is! Map<String, dynamic>) {
+            throw const FormatException('Malformed proactive message');
+          }
+          return CoreProactiveMessage(
+            id: _requiredInt(value, 'id'),
+            content: _requiredNonBlankText(value, 'content'),
+            createdAt: _requiredDateTime(value, 'created_at'),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  @override
+  LifeRuntimeStatusSnapshot decodeLifeStatus(Map<String, dynamic> json) {
+    final today = _requiredObject(json, 'today');
+    final activity = _requiredObject(json, 'active_activity');
+    final interior = _requiredObject(json, 'interior');
+    final outcome = _requiredObject(json, 'last_outcome');
+    return LifeRuntimeStatusSnapshot(
+      mode: _requiredNonBlankString(json, 'mode'),
+      lastWakeAt: _optionalDateTime(json, 'last_wake_at'),
+      nextWakeAt: _optionalDateTime(json, 'next_wake_at'),
+      wakeCount: _requiredInt(today, 'wake_count'),
+      cognitionCount: _requiredInt(today, 'cognition_count'),
+      tokenUsage: _requiredInt(today, 'token_usage'),
+      proactiveDeliveryCount: _requiredInt(today, 'proactive_delivery_count'),
+      activeActivityCount: _requiredInt(activity, 'count'),
+      privateThoughtCount: _requiredInt(interior, 'private_count'),
+      candidateCount: _requiredInt(interior, 'candidate_count'),
+      lastOutcomeType: _optionalString(outcome, 'type'),
+      lastOutcomeAt: _optionalDateTime(outcome, 'at'),
+      sharedConversationReady: _requiredBool(json, 'shared_conversation_ready'),
     );
   }
 
@@ -81,10 +142,7 @@ class ProductionCoreContractAdapter
     return value;
   }
 
-  static String _requiredNonBlankString(
-    Map<String, dynamic> json,
-    String key,
-  ) {
+  static String _requiredNonBlankString(Map<String, dynamic> json, String key) {
     final value = json[key];
     if (value is! String || value.trim().isEmpty) {
       throw FormatException('Missing non-blank string: $key');
@@ -92,10 +150,7 @@ class ProductionCoreContractAdapter
     return value.trim();
   }
 
-  static String _requiredNonBlankText(
-    Map<String, dynamic> json,
-    String key,
-  ) {
+  static String _requiredNonBlankText(Map<String, dynamic> json, String key) {
     final value = json[key];
     if (value is! String || value.trim().isEmpty) {
       throw FormatException('Missing non-blank text: $key');
@@ -113,5 +168,28 @@ class ProductionCoreContractAdapter
     final value = json[key];
     if (value is! int) throw FormatException('Missing int: $key');
     return value;
+  }
+
+  static DateTime _requiredDateTime(Map<String, dynamic> json, String key) {
+    final value = _requiredNonBlankString(json, key);
+    return DateTime.parse(value);
+  }
+
+  static DateTime? _optionalDateTime(Map<String, dynamic> json, String key) {
+    final value = json[key];
+    if (value == null) return null;
+    if (value is! String || value.trim().isEmpty) {
+      throw FormatException('Malformed datetime: $key');
+    }
+    return DateTime.parse(value);
+  }
+
+  static String? _optionalString(Map<String, dynamic> json, String key) {
+    final value = json[key];
+    if (value == null) return null;
+    if (value is! String || value.trim().isEmpty) {
+      throw FormatException('Malformed string: $key');
+    }
+    return value.trim();
   }
 }

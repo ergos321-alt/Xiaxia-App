@@ -21,7 +21,10 @@ class TestHarness {
   final ChatController controller;
 }
 
-Future<TestHarness> createHarness({CoreClientFactory? factory, bool configured = true}) async {
+Future<TestHarness> createHarness({
+  CoreClientFactory? factory,
+  bool configured = true,
+}) async {
   SharedPreferences.setMockInitialValues({});
   final preferences = await SharedPreferences.getInstance();
   final tokenStore = MemorySecureTokenStore();
@@ -30,12 +33,16 @@ Future<TestHarness> createHarness({CoreClientFactory? factory, bool configured =
     tokenStore: tokenStore,
   );
   if (configured) {
-    await repository.save(baseUrl: 'https://core.example.test', bearerToken: 'test-token');
+    await repository.save(
+      baseUrl: 'https://core.example.test',
+      bearerToken: 'test-token',
+    );
   }
   final controller = ChatController(
     store: ConversationStore(preferences),
     connectionRepository: repository,
-    clientFactory: factory ??
+    clientFactory:
+        factory ??
         StubCoreClientFactory(
           StubCoreClient(
             error: const CoreClientException(
@@ -63,11 +70,19 @@ class StubCoreClientFactory implements CoreClientFactory {
 }
 
 class StubCoreClient implements CoreClient {
-  StubCoreClient({this.reply, this.error});
+  StubCoreClient({
+    this.reply,
+    this.error,
+    this.proactiveMessages = const [],
+    this.lifeStatus,
+  });
   CoreChatReply? reply;
   CoreClientException? error;
+  List<CoreProactiveMessage> proactiveMessages;
+  LifeRuntimeStatusSnapshot? lifeStatus;
   CoreChatRequest? lastRequest;
   final List<CoreChatRequest> requests = [];
+  final List<String> registeredConversations = [];
 
   @override
   Future<CoreChatReply> sendChat(CoreChatRequest request) async {
@@ -80,6 +95,47 @@ class StubCoreClient implements CoreClient {
           reply: '我在。',
           conversationId: request.conversationId ?? 'core-conversation-1',
           requestId: 'request-${requests.length}',
+        );
+  }
+
+  @override
+  Future<void> registerSharedConversation(String conversationId) async {
+    final failure = error;
+    if (failure != null) throw failure;
+    registeredConversations.add(conversationId);
+  }
+
+  @override
+  Future<List<CoreProactiveMessage>> fetchProactiveMessages(
+    String conversationId, {
+    int afterId = 0,
+  }) async {
+    final failure = error;
+    if (failure != null) throw failure;
+    return proactiveMessages
+        .where((message) => message.id > afterId)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<LifeRuntimeStatusSnapshot> fetchLifeStatus() async {
+    final failure = error;
+    if (failure != null) throw failure;
+    return lifeStatus ??
+        LifeRuntimeStatusSnapshot(
+          mode: 'idle',
+          lastWakeAt: null,
+          nextWakeAt: DateTime.utc(2026, 9, 21, 12),
+          wakeCount: 0,
+          cognitionCount: 0,
+          tokenUsage: 0,
+          proactiveDeliveryCount: 0,
+          activeActivityCount: 0,
+          privateThoughtCount: 0,
+          candidateCount: 0,
+          lastOutcomeType: null,
+          lastOutcomeAt: null,
+          sharedConversationReady: false,
         );
   }
 

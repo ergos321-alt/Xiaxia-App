@@ -200,6 +200,13 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Flutter/Dart local and generated state
+.dart_tool/
+.flutter-plugins-dependencies
+android/.gradle/
+android/local.properties
+android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

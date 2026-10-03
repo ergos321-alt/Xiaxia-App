@@ -1,8 +1,5 @@
 class CoreChatRequest {
-  const CoreChatRequest({
-    required this.message,
-    required this.conversationId,
-  });
+  const CoreChatRequest({required this.message, required this.conversationId});
 
   final String message;
   final String? conversationId;
@@ -86,4 +83,48 @@ class CoreRuntimeStatusSnapshot {
   final String databaseStatus;
   final String identityStatus;
   final int identityFilesLoaded;
+}
+
+class CoreProactiveMessage {
+  const CoreProactiveMessage({
+    required this.id,
+    required this.content,
+    required this.createdAt,
+  });
+
+  final int id;
+  final String content;
+  final DateTime createdAt;
+}
+
+class LifeRuntimeStatusSnapshot {
+  const LifeRuntimeStatusSnapshot({
+    required this.mode,
+    required this.lastWakeAt,
+    required this.nextWakeAt,
+    required this.wakeCount,
+    required this.cognitionCount,
+    required this.tokenUsage,
+    required this.proactiveDeliveryCount,
+    required this.activeActivityCount,
+    required this.privateThoughtCount,
+    required this.candidateCount,
+    required this.lastOutcomeType,
+    required this.lastOutcomeAt,
+    required this.sharedConversationReady,
+  });
+
+  final String mode;
+  final DateTime? lastWakeAt;
+  final DateTime? nextWakeAt;
+  final int wakeCount;
+  final int cognitionCount;
+  final int tokenUsage;
+  final int proactiveDeliveryCount;
+  final int activeActivityCount;
+  final int privateThoughtCount;
+  final int candidateCount;
+  final String? lastOutcomeType;
+  final DateTime? lastOutcomeAt;
+  final bool sharedConversationReady;
 }

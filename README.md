@@ -18,6 +18,11 @@ ChatPage
 ```
 
 - `Authorization: Bearer <stored credential>` is added by `HttpCoreClient`.
+- A fresh install defaults to `https://browser.linzhixia.cn`; the credential is still
+  provisioned at runtime and is never part of the build.
+- Core endpoint configuration accepts HTTPS URLs only.
+- Chat requests use a 100-second client timeout, exceeding the edge's
+  90-second upstream response budget.
 - The first message sends only `message`.
 - The App persists the `conversation_id` returned by Core and reuses it on follow-up messages.
 - Local rendered messages are never reconstructed into a Core request.

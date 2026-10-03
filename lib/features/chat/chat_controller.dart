@@ -11,9 +11,9 @@ class ChatController extends ChangeNotifier {
     required ConversationStore store,
     required CoreConnectionRepository connectionRepository,
     required CoreClientFactory clientFactory,
-  })  : _store = store,
-        _connectionRepository = connectionRepository,
-        _clientFactory = clientFactory;
+  }) : _store = store,
+       _connectionRepository = connectionRepository,
+       _clientFactory = clientFactory;
 
   final ConversationStore _store;
   final CoreConnectionRepository _connectionRepository;
@@ -22,14 +22,17 @@ class ChatController extends ChangeNotifier {
   final List<ChatMessage> _messages = [];
   String? _coreConversationId;
   bool _sending = false;
+  bool _refreshingProactive = false;
   String? _errorMessage;
   String? _failedMessageId;
   CoreIntegrationReceipt? _lastIntegrationReceipt;
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   bool get sending => _sending;
+  bool get refreshingProactive => _refreshingProactive;
   String? get errorMessage => _errorMessage;
   bool get canRetry => _failedMessageId != null && !_sending;
+  bool get canSend => !_sending;
   String? get coreConversationId => _coreConversationId;
   CoreIntegrationReceipt? get lastIntegrationReceipt => _lastIntegrationReceipt;
 
@@ -44,7 +47,7 @@ class ChatController extends ChangeNotifier {
 
   Future<void> send(String rawText) async {
     final text = rawText.trim();
-    if (text.isEmpty || _sending) return;
+    if (text.isEmpty || !canSend) return;
 
     final message = ChatMessage(
       id: _newId('user'),
@@ -63,10 +66,63 @@ class ChatController extends ChangeNotifier {
 
   Future<void> retry() async {
     final failedId = _failedMessageId;
-    if (failedId == null || _sending) return;
+    if (failedId == null || !canSend) return;
     final message = _messages.where((item) => item.id == failedId).firstOrNull;
     if (message == null) return;
     await _requestReply(message.copyWith(deliveryState: DeliveryState.sending));
+  }
+
+  Future<void> refreshProactive() async {
+    final conversationId = _coreConversationId;
+    if (conversationId == null || _refreshingProactive) return;
+    _refreshingProactive = true;
+    notifyListeners();
+
+    CoreClient? client;
+    try {
+      final config = await _connectionRepository.load();
+      if (!config.isConfigured) return;
+      client = _clientFactory.create(config);
+      await client.registerSharedConversation(conversationId);
+      final messages = await client.fetchProactiveMessages(
+        conversationId,
+        afterId: _lastProactiveServerId,
+      );
+      final knownIds = _messages.map((message) => message.id).toSet();
+      for (final message in messages) {
+        final localId = 'proactive-${message.id}';
+        if (knownIds.add(localId)) {
+          _messages.add(
+            ChatMessage(
+              id: localId,
+              author: ChatAuthor.xiaxia,
+              text: message.content,
+              timestamp: message.createdAt,
+            ),
+          );
+        }
+      }
+      if (messages.isNotEmpty) {
+        _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        await _persist();
+      }
+    } catch (error) {
+      if (kDebugMode) debugPrint('Proactive resume-sync failed: $error');
+    } finally {
+      client?.close();
+      _refreshingProactive = false;
+      notifyListeners();
+    }
+  }
+
+  int get _lastProactiveServerId {
+    var latest = 0;
+    for (final message in _messages) {
+      if (!message.id.startsWith('proactive-')) continue;
+      final id = int.tryParse(message.id.substring('proactive-'.length));
+      if (id != null && id > latest) latest = id;
+    }
+    return latest;
   }
 
   Future<void> _requestReply(ChatMessage userMessage) async {
@@ -139,11 +195,11 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> _persist() => _store.save(
-        StoredConversation(
-          coreConversationId: _coreConversationId,
-          messages: _messages,
-        ),
-      );
+    StoredConversation(
+      coreConversationId: _coreConversationId,
+      messages: _messages,
+    ),
+  );
 
   static String _newId(String prefix) {
     return '$prefix-${DateTime.now().microsecondsSinceEpoch}';
